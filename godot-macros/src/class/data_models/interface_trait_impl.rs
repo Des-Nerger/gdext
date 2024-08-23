@@ -5,14 +5,26 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/.
  */
 
-use crate::class::{into_signature_info, make_virtual_callback, BeforeKind, SignatureInfo};
+use crate::class::{
+    into_signature_info, make_virtual_callback, maybe_turn_first_param_into_receiver, BeforeKind,
+    SignatureInfo,
+};
 use crate::{util, ParseResult};
 
 use proc_macro2::TokenStream;
 use quote::quote;
 
 /// Codegen for `#[godot_api] impl ISomething for MyType`
-pub fn transform_trait_impl(original_impl: venial::Impl) -> ParseResult<TokenStream> {
+pub fn transform_trait_impl(mut original_impl: venial::Impl) -> ParseResult<TokenStream> {
+    if cfg!(feature = "experimental-renamable-self-param") {
+        for item in original_impl.body_items.iter_mut() {
+            let venial::ImplMember::AssocFunction(function) = item else {
+                continue;
+            };
+            maybe_turn_first_param_into_receiver(function)?;
+        }
+    }
+    let original_impl = original_impl;
     let (class_name, trait_path) = util::validate_trait_impl_virtual(&original_impl, "godot_api")?;
     let class_name_obj = util::class_name_obj(&class_name);
 

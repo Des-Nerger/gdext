@@ -14,6 +14,7 @@ homepage = "https://godot-rust.github.io"
 api-custom = ["godot-bindings/api-custom"]
 docs = ["dep:markdown"]
 codegen-full = ["godot/__codegen-full"]
+experimental-renamable-self-param = []
 
 [lib]
 proc-macro = true

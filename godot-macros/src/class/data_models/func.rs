@@ -6,9 +6,9 @@
  */
 
 use crate::class::RpcAttr;
-use crate::util::{bail_fn, ident, safe_ident};
+use crate::util::{bail, bail_fn, ident, safe_ident};
 use crate::{util, ParseResult};
-use proc_macro2::{Group, Ident, TokenStream, TokenTree};
+use proc_macro2::{Delimiter, Group, Ident, TokenStream, TokenTree};
 use quote::{format_ident, quote};
 
 /// Information used for registering a Rust function with Godot.
@@ -371,6 +371,105 @@ pub(crate) fn maybe_rename_parameter(param_ident: Ident, next_unnamed_index: &mu
     } else {
         param_ident
     }
+}
+
+pub(crate) fn maybe_turn_first_param_into_receiver(
+    /* assoc_*/ func: &mut venial::Function,
+) -> ParseResult<()> {
+    let former_param_name = {
+        let params = &mut func.params.inner;
+        if params.is_empty() {
+            return Ok(());
+        }
+        let param = &mut params[0].0;
+        let tk_self = util::ident("self");
+        {
+            let venial::FnParam::Typed(typed_param) = param else {
+                return Ok(());
+            };
+            match typed_param.ty.tokens.last().unwrap() {
+                TokenTree::Ident(ident)
+                    if ident == &util::ident("Self") && typed_param.name != tk_self => {}
+                _ => {
+                    return Ok(());
+                }
+            }
+        }
+        let venial::FnParam::Typed(venial::FnTypedParam {
+            attributes,
+            tk_mut: None,
+            name,
+            tk_colon: _,
+            mut ty,
+        }) = std::mem::replace(
+            param,
+            venial::FnParam::Receiver(venial::FnReceiverParam {
+                attributes: Vec::new(),
+                tk_ref: None,
+                lifetime: None,
+                tk_mut: None,
+                tk_self,
+            }),
+        )
+        else {
+            unreachable!();
+        };
+        let venial::FnParam::Receiver(recv_param) = param else {
+            unreachable!();
+        };
+        recv_param.attributes = attributes;
+        {
+            const EXPECTED_NUM_TY_TOKENS: usize = 3;
+            if ty.tokens.len() > EXPECTED_NUM_TY_TOKENS {
+                bail!(
+                    &ty,
+                    "unexpected number of param_type tokens: got {}, expected <= {EXPECTED_NUM_TY_TOKENS}",
+                    ty.tokens.len(),
+                )?
+            }
+        }
+        _ /*Self */ = ty.tokens.pop();
+        macro_rules! bail_token {
+            ( $token: ident, $expected: expr ) => {
+                bail!(
+                    $token,
+                    "unexpected token: got `{}`, expected `{}`",
+                    $token,
+                    $expected,
+                )
+            };
+        }
+        recv_param.tk_mut = if ty.tokens.len() == 2 {
+            const EXPECTED: &str = "mut";
+            match ty.tokens.pop().unwrap() {
+                TokenTree::Ident(ident) if ident == util::ident(EXPECTED) => Some(ident),
+                token => bail_token!(token, EXPECTED)?,
+            }
+        } else {
+            None
+        };
+        recv_param.tk_ref = if ty.tokens.len() == 1 {
+            const EXPECTED: char = '&';
+            match ty.tokens.pop().unwrap() {
+                TokenTree::Punct(punct) if punct.as_char() == EXPECTED => Some(punct),
+                token => bail_token!(token, EXPECTED)?,
+            }
+        } else {
+            None
+        };
+        name
+    };
+    let former_body_ungrouped = func.body.as_ref().unwrap().stream();
+
+    func.body = Some(Group::new(
+        Delimiter::Brace,
+        quote! {
+            let #former_param_name = self;
+            #former_body_ungrouped
+        },
+    ));
+
+    Ok(())
 }
 
 fn make_method_flags(

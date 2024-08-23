@@ -6,8 +6,8 @@
  */
 use crate::class::{
     into_signature_info, make_constant_registration, make_method_registration,
-    make_signal_registrations, ConstDefinition, FuncDefinition, RpcAttr, RpcMode, SignalDefinition,
-    SignatureInfo, TransferMode,
+    make_signal_registrations, maybe_turn_first_param_into_receiver, ConstDefinition,
+    FuncDefinition, RpcAttr, RpcMode, SignalDefinition, SignatureInfo, TransferMode,
 };
 use crate::util::{bail, ident, require_api_version, KvParser};
 use crate::{handle_mutually_exclusive_keys, util, ParseResult};
@@ -140,6 +140,10 @@ fn process_godot_fns(
         let venial::ImplMember::AssocFunction(function) = item else {
             continue;
         };
+
+        if cfg!(feature = "experimental-renamable-self-param") {
+            maybe_turn_first_param_into_receiver(function)?;
+        }
 
         let Some(attr) = extract_attributes(function)? else {
             continue;
